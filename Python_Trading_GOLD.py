@@ -1,84 +1,99 @@
 import os
 import asyncio
-import threading
 import yfinance as yf
-import openai
 from telegram import Bot
+from openai import AsyncOpenAI
 from flask import Flask
 
-# === CONFIG ===
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-OPENAI_KEY = os.environ.get("OPENAI_KEY")
-PORT = int(os.environ.get("PORT", 10000))  # Render injecte la variable PORT
+# =========================
+# Variables d’environnement
+# =========================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
-openai.api_key = OPENAI_KEY
+client = AsyncOpenAI(api_key=OPENAI_KEY)
 
-# === FLASK MINIMAL POUR RENDER ===
+# =========================
+# Vérification opportunité
+# =========================
+def check_trading_opportunity(data, threshold=0.7):
+    """
+    Vérifie si une opportunité intéressante existe.
+    threshold : variation minimale en % pour considérer une opportunité
+    """
+    last_close = data['Close'].iloc[-1]
+    prev_close = data['Close'].iloc[-5]  # variation sur 5 bougies (≈ 1h15)
+    change = (last_close - prev_close) / prev_close * 100
+
+    if change >= threshold:
+        return f"Opportunité Achat (Gold) : prix monté de {change:.2f}%"
+    elif change <= -threshold:
+        return f"Opportunité Vente (Gold) : prix baissé de {change:.2f}%"
+    else:
+        return None
+
+# =========================
+# Analyse IA pour TP/SL
+# =========================
+async def ai_analysis(market_data, signal):
+    prompt = f"""
+    Tu es un expert en trading sur l'or (XAUUSD).
+    Voici un signal détecté : {signal}
+
+    Donne une recommandation avec :
+    - Un prix d'entrée
+    - 3 Take Profit (TP1, TP2, TP3)
+    - Un Stop Loss (SL)
+
+    Contrainte : réponds de manière concise et structurée.
+    Voici les données récentes du marché :
+    {market_data}
+    """
+    response = await client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+# =========================
+# Envoi Telegram
+# =========================
+async def send_signal(message):
+    await bot.send_message(chat_id=CHAT_ID, text=message)
+
+# =========================
+# Boucle principale
+# =========================
+async def job():
+    while True:
+        data = yf.download("XAUUSD=X", period="1d", interval="15m").tail(20)
+        signal = check_trading_opportunity(data)
+
+        if signal:
+            analysis = await ai_analysis(data.to_string(), signal)
+            message = f"{signal}\n\n Analyse IA :\n{analysis}"
+            await send_signal(message)
+            print("Signal envoyé ✔️")
+        else:
+            print("Pas d'opportunité intéressante")
+
+        await asyncio.sleep(60 * 15)  # toutes les 15 minutes
+
+# =========================
+# Flask (Render)
+# =========================
 app = Flask(__name__)
 
 @app.route("/")
-def index():
-    return "Bot Telegram en ligne"
+def home():
+    return "Bot de trading Gold en ligne"
 
-def run_flask():
-    app.run(host="0.0.0.0", port=PORT)
-
-threading.Thread(target=run_flask).start()
-
-# === FONCTIONS BOT ===
-def get_market_data():
-    """Récupère les 10 dernières bougies horaires de l'or, avec fallback"""
-    try:
-        data = yf.download("XAUUSD=X", period="1d", interval="1h")
-        if data.empty:
-            print("XAUUSD=X vide, fallback sur GC=F")
-            data = yf.download("GC=F", period="1d", interval="1h")
-        if data.empty:
-            print("Pas de données disponibles sur Yahoo Finance")
-            return "Données indisponibles"
-        return data.tail(10).to_string()
-    except Exception as e:
-        print(f"Erreur récupération Yahoo Finance: {e}")
-        return "Données indisponibles"
-
-async def ai_analysis(market_data: str) -> str:
-    """Demande à l'IA une recommandation de trading"""
-    prompt = f"""
-    Voici les 10 dernières bougies de l'or (XAU/USD) :
-    {market_data}
-
-    Donne une recommandation de trading (Achat, Vente ou Attente),
-    avec une courte justification en 2-3 phrases maximum.
-    """
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3
-    )
-    return response["choices"][0]["message"]["content"]
-
-async def send_signal(message: str):
-    """Envoie un message sur Telegram"""
-    await bot.send_message(chat_id=CHAT_ID, text=message)
-
-async def job():
-    """Récupère les données, analyse et envoie sur Telegram"""
-    try:
-        market_data = get_market_data()
-        analysis = await ai_analysis(market_data)
-        await send_signal(analysis)
-        print("Signal envoyé ✔️")
-    except Exception as e:
-        print(f"Erreur: {e}")
-
-# === BOUCLE PRINCIPALE ===
-async def main_loop():
-    """Exécute le job toutes les 2 heures"""
-    while True:
-        await job()
-        await asyncio.sleep(2 * 60 * 60)  # 2 heures en secondes
-
+# =========================
+# Lancer
+# =========================
 if __name__ == "__main__":
-    asyncio.run(main_loop())
+    loop = asyncio.get_event_loop()
+    loop.create_task(job())
+    app.run(host="0.0.0.0", port=10000)
