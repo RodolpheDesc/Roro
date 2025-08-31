@@ -9,8 +9,8 @@ from flask import Flask
 # Variables d’environnement
 # =========================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+CHAT_ID = os.getenv("CHAT_ID")
+OPENAI_KEY = os.getenv("OPENAI_KEY")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 client = AsyncOpenAI(api_key=OPENAI_KEY)
