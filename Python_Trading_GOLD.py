@@ -15,6 +15,10 @@ OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 bot = Bot(token=TELEGRAM_TOKEN)
 client = AsyncOpenAI(api_key=OPENAI_KEY)
 
+async def notify_startup():
+    message = "Bot de trading Gold est maintenant en ligne sur Render !"
+    await bot.send_message(chat_id=CHAT_ID, text=message)
+
 # =========================
 # Vérification opportunité
 # =========================
@@ -95,5 +99,6 @@ def home():
 # =========================
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
+    loop.run_until_complete(notify_startup())
     loop.create_task(job())
     app.run(host="0.0.0.0", port=10000)
